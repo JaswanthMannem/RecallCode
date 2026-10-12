@@ -117,7 +117,17 @@ except SQLAlchemyError:
     st.error("Could not load the revision queue from the database.")
     st.stop()
 
-overdue_count = sum(review.due_at < datetime.now(UTC) for review in due_reviews)
+now = datetime.now(UTC)
+
+overdue_count = sum(
+    (
+        review.due_at.replace(tzinfo=UTC)
+        if review.due_at.tzinfo is None
+        else review.due_at
+    )
+    < now
+    for review in due_reviews
+)
 due_today_count = len(due_reviews) - overdue_count
 
 metric1, metric2, metric3 = st.columns(3)

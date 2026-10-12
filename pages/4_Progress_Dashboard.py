@@ -53,7 +53,9 @@ with left:
 
         st.bar_chart(status_df)
     else:
-        st.info("No problems tracked yet. Add your first problem in the Problem Journal.")
+        st.info(
+            "No problems tracked yet. Add your first problem in the Problem Journal."
+        )
 
 with right:
     st.subheader("Problems by Difficulty")
@@ -105,7 +107,9 @@ if topic_progress:
     chart_df = display_df.set_index("Topic")[["Completion (%)"]]
     st.bar_chart(chart_df, y="Completion (%)")
 else:
-    st.info("Create topics and associate problems with them to see topic-wise progress.")
+    st.info(
+        "Create topics and associate problems with them to see topic-wise progress."
+    )
 
 st.divider()
 
