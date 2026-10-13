@@ -1,8 +1,11 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from recallcode.models import Problem, Review, Topic
+from recallcode.problem_service import create_problem
 from recallcode.topic_service import (
     create_topic,
+    delete_topic,
     list_topics,
     list_topics_with_notes,
 )
@@ -77,3 +80,68 @@ def test_list_topics_with_notes_includes_descriptions(test_session_factory):
     assert list_topics_with_notes(session_factory=test_session_factory) == [
         (topic_id, "Graphs", "Traversal and connectivity")
     ]
+
+
+def test_delete_topic_preserves_problems_and_removes_associations(
+    test_session_factory,
+):
+    topic_id = create_topic(
+        "Topic To Delete",
+        session_factory=test_session_factory,
+    )
+    problem_id = create_problem(
+        "Problem To Preserve",
+        topic_ids=[topic_id],
+        session_factory=test_session_factory,
+    )
+
+    assert delete_topic(topic_id, session_factory=test_session_factory) is True
+
+    with test_session_factory() as session:
+        assert session.get(Topic, topic_id) is None
+
+        problem = session.get(Problem, problem_id)
+        assert problem is not None
+        assert all(topic.id != topic_id for topic in problem.topics)
+
+
+def test_delete_topic_removes_topic_reviews(test_session_factory):
+    from datetime import UTC, datetime
+
+    from recallcode.revision_service import create_review
+
+    topic_id = create_topic(
+        "Review Topic To Delete",
+        session_factory=test_session_factory,
+    )
+    review_id = create_review(
+        topic_id=topic_id,
+        due_at=datetime.now(UTC),
+        session_factory=test_session_factory,
+    )
+
+    assert delete_topic(topic_id, session_factory=test_session_factory) is True
+
+    with test_session_factory() as session:
+        assert session.get(Review, review_id) is None
+
+
+def test_delete_nonexistent_topic_returns_false(test_session_factory):
+    assert delete_topic(999999, session_factory=test_session_factory) is False
+
+
+def test_delete_topic_with_children_is_rejected(test_session_factory):
+    parent_id = create_topic(
+        "Parent Topic",
+        session_factory=test_session_factory,
+    )
+
+    with test_session_factory.begin() as session:
+        child = Topic(name="Child Topic", parent_id=parent_id)
+        session.add(child)
+
+    with pytest.raises(ValueError, match="child topics"):
+        delete_topic(parent_id, session_factory=test_session_factory)
+
+    with test_session_factory() as session:
+        assert session.get(Topic, parent_id) is not None

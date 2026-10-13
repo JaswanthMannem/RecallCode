@@ -9,6 +9,7 @@ from recallcode.revision_service import (
     create_review,
     list_due_reviews,
     list_upcoming_reviews,
+    normalize_utc,
 )
 from recallcode.topic_service import list_topics_with_notes
 
@@ -119,15 +120,10 @@ except SQLAlchemyError:
 
 now = datetime.now(UTC)
 
-overdue_count = sum(
-    (
-        review.due_at.replace(tzinfo=UTC)
-        if review.due_at.tzinfo is None
-        else review.due_at
-    )
-    < now
-    for review in due_reviews
-)
+now = datetime.now(UTC)
+
+overdue_count = sum(normalize_utc(review.due_at) < now for review in due_reviews)
+
 due_today_count = len(due_reviews) - overdue_count
 
 metric1, metric2, metric3 = st.columns(3)

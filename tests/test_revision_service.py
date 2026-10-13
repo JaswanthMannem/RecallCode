@@ -9,6 +9,7 @@ from recallcode.revision_service import (
     create_review,
     list_due_reviews,
     list_upcoming_reviews,
+    normalize_utc,
 )
 from recallcode.topic_service import create_topic
 
@@ -211,3 +212,180 @@ def test_create_review_rejects_both_targets(test_session_factory):
             due_at=datetime.now(UTC),
             session_factory=test_session_factory,
         )
+
+
+def test_normalize_utc_handles_naive_datetime():
+    value = datetime(2026, 10, 13, 12, 0)
+
+    result = normalize_utc(value)
+
+    assert result.tzinfo == UTC
+    assert result == datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+
+
+def test_normalize_utc_converts_aware_datetime():
+    from datetime import timedelta, timezone
+
+    value = datetime(
+        2026,
+        10,
+        13,
+        17,
+        30,
+        tzinfo=timezone(timedelta(hours=5, minutes=30)),
+    )
+
+    result = normalize_utc(value)
+
+    assert result == datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+
+
+def test_create_review_accepts_naive_utc_datetime(test_session_factory):
+    from recallcode.models import Problem, Review
+
+    with test_session_factory.begin() as session:
+        problem = Problem(title="Timezone Test")
+        session.add(problem)
+        session.flush()
+        problem_id = problem.id
+
+    review_id = create_review(
+        problem_id=problem_id,
+        due_at=datetime(2026, 10, 13, 12, 0),
+        session_factory=test_session_factory,
+    )
+
+    with test_session_factory() as session:
+        review = session.get(Review, review_id)
+
+        assert review is not None
+        assert normalize_utc(review.due_at) == datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+
+
+def test_list_due_reviews_accepts_naive_as_of(test_session_factory):
+    from recallcode.models import Problem
+
+    with test_session_factory.begin() as session:
+        problem = Problem(title="Due Review Test")
+        session.add(problem)
+        session.flush()
+        problem_id = problem.id
+
+    create_review(
+        problem_id=problem_id,
+        due_at=datetime(2026, 10, 13, 11, 0, tzinfo=UTC),
+        session_factory=test_session_factory,
+    )
+
+    reviews = list_due_reviews(
+        as_of=datetime(2026, 10, 13, 12, 0),
+        session_factory=test_session_factory,
+    )
+
+    assert len(reviews) == 1
+
+
+def test_list_upcoming_reviews_accepts_naive_as_of(test_session_factory):
+    from recallcode.models import Problem
+
+    with test_session_factory.begin() as session:
+        problem = Problem(title="Upcoming Review Test")
+        session.add(problem)
+        session.flush()
+        problem_id = problem.id
+
+    create_review(
+        problem_id=problem_id,
+        due_at=datetime(2026, 10, 14, 12, 0, tzinfo=UTC),
+        session_factory=test_session_factory,
+    )
+
+    reviews = list_upcoming_reviews(
+        days=2,
+        as_of=datetime(2026, 10, 13, 12, 0),
+        session_factory=test_session_factory,
+    )
+
+    assert len(reviews) == 1
+
+
+def test_list_due_reviews_includes_exact_cutoff(test_session_factory):
+    from recallcode.models import Problem
+    from recallcode.revision_service import create_review, list_due_reviews
+
+    cutoff = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+
+    with test_session_factory.begin() as session:
+        problem = Problem(title="Exact Cutoff Test")
+        session.add(problem)
+        session.flush()
+        problem_id = problem.id
+
+    create_review(
+        problem_id=problem_id,
+        due_at=cutoff,
+        session_factory=test_session_factory,
+    )
+
+    reviews = list_due_reviews(
+        as_of=cutoff,
+        session_factory=test_session_factory,
+    )
+
+    assert len(reviews) == 1
+
+
+def test_list_due_reviews_excludes_review_after_cutoff(test_session_factory):
+    from recallcode.models import Problem
+    from recallcode.revision_service import create_review, list_due_reviews
+
+    cutoff = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+
+    with test_session_factory.begin() as session:
+        problem = Problem(title="Future Cutoff Test")
+        session.add(problem)
+        session.flush()
+        problem_id = problem.id
+
+    create_review(
+        problem_id=problem_id,
+        due_at=cutoff + timedelta(seconds=1),
+        session_factory=test_session_factory,
+    )
+
+    reviews = list_due_reviews(
+        as_of=cutoff,
+        session_factory=test_session_factory,
+    )
+
+    assert reviews == []
+
+
+def test_list_upcoming_reviews_includes_exact_end_boundary(
+    test_session_factory,
+):
+    from recallcode.models import Problem
+    from recallcode.revision_service import create_review, list_upcoming_reviews
+
+    start = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+    end = start + timedelta(days=2)
+
+    with test_session_factory.begin() as session:
+        problem = Problem(title="Upcoming Boundary Test")
+        session.add(problem)
+        session.flush()
+        problem_id = problem.id
+
+    create_review(
+        problem_id=problem_id,
+        due_at=end,
+        session_factory=test_session_factory,
+    )
+
+    reviews = list_upcoming_reviews(
+        days=2,
+        as_of=start,
+        session_factory=test_session_factory,
+    )
+
+    assert len(reviews) == 1

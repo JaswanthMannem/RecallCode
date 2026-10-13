@@ -20,6 +20,18 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def normalize_utc(value: datetime) -> datetime:
+    """Return a timezone-aware UTC datetime.
+
+    Naive datetimes are assumed to represent UTC, as SQLite commonly
+    returns stored datetimes without timezone information.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+
+    return value.astimezone(UTC)
+
+
 def create_review(
     *,
     due_at: datetime,
@@ -30,6 +42,8 @@ def create_review(
     """Schedule a review for a problem or topic."""
     if (problem_id is None) == (topic_id is None):
         raise ValueError("Provide exactly one of problem_id or topic_id.")
+
+    due_at = normalize_utc(due_at)
 
     with session_factory.begin() as session:
         if problem_id is not None and session.get(Problem, problem_id) is None:
@@ -57,7 +71,7 @@ def list_due_reviews(
     session_factory: sessionmaker = SessionLocal,
 ) -> list[Review]:
     """Return reviews due by as_of, including overdue reviews."""
-    cutoff = as_of or _now()
+    cutoff = normalize_utc(as_of) if as_of is not None else _now()
 
     with session_factory() as session:
         query = (
@@ -128,7 +142,7 @@ def list_upcoming_reviews(
     if days < 0:
         raise ValueError("Days cannot be negative.")
 
-    start = as_of or _now()
+    start = normalize_utc(as_of) if as_of is not None else _now()
     end = start + timedelta(days=days)
 
     with session_factory() as session:

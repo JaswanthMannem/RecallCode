@@ -442,3 +442,113 @@ def test_record_attempt_rejects_nonexistent_problem(session_factory):
             time_taken_minutes=10,
             session_factory=session_factory,
         )
+
+
+def test_delete_problem_removes_dependent_records(test_session_factory):
+    """Deleting a problem removes attempts, reviews, and topic links."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from recallcode.models import Attempt, Problem, Review, Topic
+    from recallcode.problem_service import (
+        create_problem,
+        delete_problem,
+    )
+
+    topic_id = None
+    problem_id = create_problem(
+        title="Deletion Test Problem",
+        topic_ids=[],
+        session_factory=test_session_factory,
+    )
+
+    with test_session_factory.begin() as session:
+        topic = Topic(name="Deletion Test Topic")
+        session.add(topic)
+        session.flush()
+        topic_id = topic.id
+
+        problem = session.get(Problem, problem_id)
+        assert problem is not None
+        problem.topics.append(topic)
+
+        session.add(
+            Attempt(
+                problem_id=problem_id,
+                outcome="solved_independently",
+            )
+        )
+        session.add(
+            Review(
+                problem_id=problem_id,
+                due_at=datetime.now(UTC),
+            )
+        )
+
+    delete_problem(problem_id, session_factory=test_session_factory)
+
+    with test_session_factory() as session:
+        assert session.get(Problem, problem_id) is None
+
+        attempts = session.scalars(
+            select(Attempt).where(Attempt.problem_id == problem_id)
+        ).all()
+        reviews = session.scalars(
+            select(Review).where(Review.problem_id == problem_id)
+        ).all()
+
+        assert attempts == []
+        assert reviews == []
+
+        # The topic must survive the deletion of its problem.
+        assert session.get(Topic, topic_id) is not None
+
+        # The association between the deleted problem and topic is gone.
+        remaining_links = session.execute(
+            select(Problem.id).join(Problem.topics).where(Topic.id == topic_id)
+        ).all()
+        assert remaining_links == []
+
+
+@pytest.mark.parametrize("outcome", ["", "   ", None, 123])
+def test_record_attempt_rejects_invalid_outcome(test_session_factory, outcome):
+    with pytest.raises(ValueError, match="Outcome cannot be empty"):
+        record_attempt(
+            problem_id=1,
+            outcome=outcome,
+            session_factory=test_session_factory,
+        )
+
+
+@pytest.mark.parametrize("duration", [1.5, True, False, "10"])
+def test_record_attempt_rejects_invalid_duration_type(test_session_factory, duration):
+    with pytest.raises(ValueError, match="integer or None"):
+        record_attempt(
+            problem_id=1,
+            outcome="solved_independently",
+            time_taken_minutes=duration,
+            session_factory=test_session_factory,
+        )
+
+
+@pytest.mark.parametrize("used_hint", [1, 0, "yes", None])
+def test_record_attempt_rejects_invalid_used_hint(test_session_factory, used_hint):
+    with pytest.raises(TypeError, match="used_hint must be a boolean"):
+        record_attempt(
+            problem_id=1,
+            outcome="solved_independently",
+            used_hint=used_hint,
+            session_factory=test_session_factory,
+        )
+
+
+@pytest.mark.parametrize("notes", [123, True, []])
+def test_record_attempt_rejects_invalid_notes(test_session_factory, notes):
+    with pytest.raises(ValueError, match="Notes must be a string or None"):
+        record_attempt(
+            problem_id=1,
+            outcome="solved_independently",
+            notes=notes,
+            session_factory=test_session_factory,
+        )

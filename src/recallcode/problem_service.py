@@ -177,8 +177,23 @@ def record_attempt(
     session_factory: sessionmaker = SessionLocal,
 ) -> int:
     """Record an attempt without overwriting previous attempts."""
-    if time_taken_minutes is not None and time_taken_minutes < 0:
-        raise ValueError("Time taken cannot be negative.")
+    if not isinstance(outcome, str) or not outcome.strip():
+        raise ValueError("Outcome cannot be empty.")
+
+    if not isinstance(used_hint, bool):
+        raise TypeError("used_hint must be a boolean.")
+
+    if time_taken_minutes is not None:
+        if not isinstance(time_taken_minutes, int) or isinstance(
+            time_taken_minutes, bool
+        ):
+            raise ValueError("Time taken must be an integer or None.")
+
+        if time_taken_minutes < 0:
+            raise ValueError("Time taken cannot be negative.")
+
+    if notes is not None and not isinstance(notes, str):
+        raise ValueError("Notes must be a string or None.")
 
     with session_factory.begin() as session:
         if session.get(Problem, problem_id) is None:
@@ -186,7 +201,7 @@ def record_attempt(
 
         attempt = Attempt(
             problem_id=problem_id,
-            outcome=outcome,
+            outcome=outcome.strip(),
             used_hint=used_hint,
             time_taken_minutes=time_taken_minutes,
             notes=notes,

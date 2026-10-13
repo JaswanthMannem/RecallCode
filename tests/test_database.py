@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import create_engine, select
+import pytest
+from sqlalchemy import create_engine, event, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -9,12 +11,20 @@ from recallcode.models import Attempt, Problem, Review, Topic
 
 
 def test_database_workflow():
-    # Use an isolated in-memory database for this test.
+    """Verify creating and retrieving related database records."""
     test_engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    @event.listens_for(test_engine, "connect")
+    def enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+        """Enable foreign-key enforcement for this test database."""
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     TestSession = sessionmaker(
         bind=test_engine,
         expire_on_commit=False,
@@ -24,7 +34,6 @@ def test_database_workflow():
 
     try:
         with TestSession() as session:
-            # Create a topic.
             topic = Topic(
                 name="Subarrays",
                 description="Contiguous portions of arrays",
@@ -32,7 +41,6 @@ def test_database_workflow():
             session.add(topic)
             session.flush()
 
-            # Save a problem under that topic.
             problem = Problem(
                 title="Maximum Subarray",
                 platform="LeetCode",
@@ -45,7 +53,6 @@ def test_database_workflow():
             session.add(problem)
             session.flush()
 
-            # Record an attempt.
             attempt = Attempt(
                 problem=problem,
                 outcome="solved_independently",
@@ -54,7 +61,6 @@ def test_database_workflow():
             )
             session.add(attempt)
 
-            # Schedule a review.
             review = Review(
                 problem=problem,
                 due_at=datetime.now(UTC),
@@ -62,7 +68,6 @@ def test_database_workflow():
             session.add(review)
             session.commit()
 
-            # Verify saved data and relationships.
             saved_problem = session.scalar(
                 select(Problem).where(Problem.title == "Maximum Subarray")
             )
@@ -73,8 +78,18 @@ def test_database_workflow():
             assert len(saved_problem.attempts) == 1
             assert len(saved_problem.reviews) == 1
 
-            print("Database workflow test passed!")
-
     finally:
         Base.metadata.drop_all(test_engine)
         test_engine.dispose()
+
+
+def test_database_rejects_invalid_foreign_key(test_session_factory):
+    """Verify that attempts cannot reference nonexistent problems."""
+    with pytest.raises(IntegrityError), test_session_factory.begin() as session:
+        session.add(
+            Attempt(
+                problem_id=999999,
+                outcome="solved_independently",
+            )
+        )
+        session.flush()

@@ -43,3 +43,40 @@ def list_topics_with_notes(
     with session_factory() as session:
         topics = session.scalars(select(Topic).order_by(Topic.name)).all()
         return [(topic.id, topic.name, topic.description) for topic in topics]
+
+
+def delete_topic(
+    topic_id: int,
+    *,
+    session_factory: sessionmaker = SessionLocal,
+) -> bool:
+    """Delete a topic and its dependent associations and reviews.
+
+    Problems linked to the topic are preserved.
+    Topics with child topics cannot be deleted.
+    """
+    from recallcode.models import Review
+
+    with session_factory.begin() as session:
+        topic = session.get(Topic, topic_id)
+
+        if topic is None:
+            return False
+
+        if topic.children:
+            raise ValueError(
+                "Cannot delete a topic that has child topics. "
+                "Reassign or delete its children first."
+            )
+
+        # Remove topic-specific reviews before deleting the topic.
+        session.query(Review).filter(Review.topic_id == topic_id).delete(
+            synchronize_session=False
+        )
+
+        # Remove problem associations without deleting the problems.
+        topic.problems.clear()
+
+        session.delete(topic)
+
+    return True
